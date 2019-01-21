@@ -34,7 +34,7 @@ class Tacotron(nn.Module):
         decoder_hidden = torch.zeros(batch_size, hp.decoder_lstm_layers, hp.decoder_lstm_units)
         decoder_cell = torch.zeros(batch_size, hp.decoder_lstm_layers, hp.decoder_lstm_units)
         decoder_outputs = torch.zeros(batch_size, max_target_length, self.decoder.decoder_output_size)
-        self.postnet.initialize(self.decoder.decoder_output_size)
+        self.postnet.initialize(self.decoder.decoder_output_size, max_target_length)
         stop_token_prediction = torch.zeros(batch_size, max_target_length, hp.outputs_per_step)
 
         for t in range(max_target_length / hp.outputs_per_step):
@@ -199,12 +199,17 @@ class Decoder(nn.Module):
 class PostNet(nn.Module):
     def __init__(self):
         super(PostNet, self).__init__()
-    def initialize(self, in_channels, out_channels=hp.postnet_conv_channels, kernel_size=hp.postnet_conv_width, layers=hp.postnet_conv_layers):
+    def initialize(self, in_channels, max_length, out_channels=hp.postnet_conv_channels, kernel_size=hp.postnet_conv_width, layers=hp.postnet_conv_layers):
         self.layers = layers
-        self.conv = nn.Conv1d(in_channels, hp.postnet_conv_channels, kernel_size, padding="same")
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size,
+                               padding=_compute_same_padding(kernel_size, max_length))
+        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=kernel_size,
+                               padding=_compute_same_padding(kernel_size, max_length))
         self.linear = nn.Linear(hp.postnet_conv_channels, in_channels)
-    def Conv1d(self, inputs, activation=None):
-        conv1d_output = self.conv(inputs)
+    def Conv1d(self, inputs, cur_layer, conv, activation=None):
+        if cur_layer < self.layers - 1:
+            activation = torch.tanh
+        conv1d_output = conv(inputs)
         batch_norm_output = self.bath_norm(conv1d_output)
         if self.activation is not None:
             batch_norm_output = self.activation(batch_norm_output)
@@ -212,9 +217,9 @@ class PostNet(nn.Module):
     def forward(self, inputs):
         x = inputs
         for i in range(self.layers):
-            if i < self.layers - 1:
-                x = self.Conv1d(x, torch.tanh)
+            if i == 0:
+                x = self.Conv1d(x, self.conv1)
             else:
-                x = self.Conv1d(x)
+                x = self.Conv1d(x, self.conv2)
         x = self.linear(x)
         return x
