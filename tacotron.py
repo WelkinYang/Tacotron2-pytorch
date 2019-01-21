@@ -7,32 +7,35 @@ from hparams import hparams as hp
 import numpy as np
 
 class Tacotron(nn.Module):
-    def __init__(self, encoder, decoder, postnet, max_length=1000):
+    def __init__(self, ):
         super(Tacotron, self).__init__()
+
+    def initialize(self, encoder, decoder, postnet, max_length=1000):
         self.encoder = encoder
         self.decoder = decoder
         self.postnet = PostNet
         self.max_length = max_length
 
     def forward(self, input_group, mel_target = None, linear_target=None, stop_token_target=None, target_lens=None):
+        #input_seqs [batch_size, seq_lens]
         input_seqs, input_lens = input_group
         batch_size = input_seqs.size(0)
         #mel_target [batch_size,  max_target_length / hp.outputs_per_step, decoder_output_size]
         if mel_target is None or target_lens is None:
             assert hp.use_gta_mode == False, 'if use_gta_mode == True, please provide with target'
-            max_target_length = self.max_length
+            max_target_length = self.max_length / hp.outputs_per_step
         else:
-            max_target_length = max(target_lens)
-
+            max_target_length = max(target_lens) / hp.outputs_per_step
+        self.encoder.initialize(input_lens)
         encoder_outputs = self.encoder(input_seqs, input_lens)
-        self.decoder.attn.initialize(batch_size, max_target_length / hp.outputs_per_step, encoder_outputs)
+        self.decoder.attn.initialize(batch_size, max_target_length, encoder_outputs)
         decoder_inputs = torch.zeros(batch_size, 1, self.decoder.lstm_input_size)
         #initial decoder hidden state
         decoder_hidden = torch.zeros(batch_size, hp.decoder_lstm_layers, hp.decoder_lstm_units)
         decoder_cell = torch.zeros(batch_size, hp.decoder_lstm_layers, hp.decoder_lstm_units)
-        decoder_outputs = torch.zeros(batch_size, max_target_length / hp.outputs_per_step, self.decoder.decoder_output_size)
+        decoder_outputs = torch.zeros(batch_size, max_target_length, self.decoder.decoder_output_size)
         self.postnet.initialize(self.decoder.decoder_output_size)
-        stop_token_prediction = torch.zeros(batch_size, max_target_length / hp.outputs_per_step, hp.outputs_per_step)
+        stop_token_prediction = torch.zeros(batch_size, max_target_length, hp.outputs_per_step)
 
         for t in range(max_target_length / hp.outputs_per_step):
             decoder_output, stop_token_output, decoder_hidden, decoder_cell_state = \
@@ -57,29 +60,46 @@ class Tacotron(nn.Module):
         if hp.use_stop_token:
             stop_token_prediction = torch.reshape(stop_token_prediction, [batch_size, -1])
 
+def _compute_same_padding(kernel_size, input_length):
+    #when stride == 1, dilation == 1, groups == 1
+    #Lout = [(Lin + 2 * padding - (kernel_size - 1) - 1) + 1] = [Lin + 2 * padding - kernel_size + 1]
+    #padding = (Lout + (kernel_size - 1) - Lin) / 2 = (kernel_size - 1) / 2
+    return (kernel_size - 1) / 2
+
+
 class EncoderConvlutions(nn.Module):
-    def __init__(self, conv_layers, conv_in_channels, conv_out_channels, kernel_size, activation=nn.ReLU):
+    def __init__(self, max_length, conv_layers, conv_in_channels, conv_out_channels, kernel_size, activation=nn.ReLU):
         super(EncoderConvlutions, self).__init__()
         self.activation = activation
-        self.conv = nn.Conv1d(conv_in_channels, conv_out_channels, kernel_size=self.kernel_size, padding="same")
+        self.conv1 = nn.Conv1d(conv_in_channels, conv_out_channels, kernel_size=self.kernel_size, padding=_compute_same_padding(kernel_size, max_length))
+        self.conv2 = nn.Conv1d(conv_out_channels, conv_out_channels, kernel_size=self.kernel_size, padding=_compute_same_padding(kernel_size, max_length))
         self.batch_norm = nn.BatchNorm1d(conv_out_channels)
-    def Conv1d(self, inputs):
-        conv1d_output = self.conv(inputs)
+
+    def Conv1d(self, inputs, conv):
+        conv1d_output = conv(inputs)
         batch_norm_output = self.bath_norm(conv1d_output)
         if self.activation is not None:
             batch_norm_output = self.activation(batch_norm_output)
-        return F.dropout(batch_norm_output, p=hp.dropout_rate)
+        return F.dropout(batch_norm_output, p=hp.dropout_rate, training=self.training)
     def forward(self, inputs):
-        x = inputs
+        # the Conv1d of pytroch chanages the channels at the 1 dim
+        # [batch_size, max_time, feature_dims] -> [batch_size, feature_dims, max_time]
+        x = torch.transpose(inputs, 1, 2)
         for i in range(self.conv_layers):
-            x = self.Conv1d(x)
-        return x
+            if i == 0:
+                x = self.Conv1d(x, self.conv1)
+            else:
+                x = self.Conv1d(x, self.conv2)
+        outputs = torch.transpose(x, 1, 2)
+        return outputs
 
 class Encoder(nn.Module):
-    def __init__(self):
+    def __init__(self, max_length):
         super(Encoder, self).__init__()
+
+    def initialize(self, max_length):
         self.embedding = nn.Embedding(get_vocab_size(), hp.embedding_dim)
-        self.encoder_conv = EncoderConvlutions(hp.encoder_conv_layers, hp.embedding_dim, hp.encoder_conv_channels)
+        self.encoder_conv = EncoderConvlutions(max_length, hp.encoder_conv_layers, hp.embedding_dim, hp.encoder_conv_channels)
         self.lstm = nn.LSTM(hp.encoder_conv_channels, hp.encoder_lstm_units, batch_first=True, bidirectional=True)
         self.hidden_size = hp.encoder_lstm_units
 
@@ -103,7 +123,7 @@ class PreNet(nn.Module):
         x = inputs
         for linear in self.linears:
             output = self.activation(linear(x))
-            return F.dropout(output, p=hp.dropout_rate)
+            return F.dropout(output, p=hp.dropout_rate, training=self.training)
 
 class LocationSensitiveSoftAttention(nn.Module):
     def __init__(self, hidden_size, num_units, cumulate_weights=True):
@@ -188,7 +208,7 @@ class PostNet(nn.Module):
         batch_norm_output = self.bath_norm(conv1d_output)
         if self.activation is not None:
             batch_norm_output = self.activation(batch_norm_output)
-        return F.dropout(batch_norm_output, p=hp.dropout_rate)
+        return F.dropout(batch_norm_output, p=hp.dropout_rate, training=self.training)
     def forward(self, inputs):
         x = inputs
         for i in range(self.layers):
