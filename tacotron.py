@@ -15,6 +15,14 @@ class Tacotron(nn.Module):
         self.postnet = postnet
         self.max_length = max_length
 
+    @property
+    def _stop_at_any(self):
+        return hp.stop_at_any
+
+    @property
+    def _use_linear_spec(self):
+        return hp.use_linear_spec
+
     def forward(self, input_group, mel_group = None, linear_target=None, stop_token_target=None):
         #input_seqs [batch_size, seq_lens]
         input_seqs, max_input_len = input_group
@@ -54,12 +62,15 @@ class Tacotron(nn.Module):
                         decoder_inputs = mel_target[:, t:t+1, :]
                     else:
                         decoder_inputs = decoder_output
+            else:
+                decoder_inputs = decoder_outputs[:, t, :]
+                finished = (torch.round(stop_token_output) != 0)
+                if self._stop_at_any:
+                    finished = (torch.sum(finished) > 0)
+                else:
+                    finished = (torch.sum(finished) == finished.size(1))
+                if finished:
+                    break
+
         postnet_outputs = self.postnet(decoder_outputs)
         mel_outputs = decoder_outputs + postnet_outputs
-
-        if hp.use_stop_token:
-            stop_token_prediction = torch.reshape(stop_token_prediction, [batch_size, -1])
-
-
-
-
