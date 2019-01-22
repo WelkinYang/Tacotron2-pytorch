@@ -5,6 +5,7 @@ import torch.nn.utils as utils
 from data_utils import get_vocab_size
 from hparams import hparams as hp
 import numpy as np
+from ZoneoutRNN import ZoneoutRNN
 
 class Tacotron(nn.Module):
     def __init__(self, ):
@@ -13,31 +14,32 @@ class Tacotron(nn.Module):
     def initialize(self, encoder, decoder, postnet, max_length=1000):
         self.encoder = encoder
         self.decoder = decoder
-        self.postnet = PostNet
+        self.postnet = postnet
         self.max_length = max_length
 
     def forward(self, input_group, mel_target = None, linear_target=None, stop_token_target=None, target_lens=None):
         #input_seqs [batch_size, seq_lens]
         input_seqs, input_lens = input_group
         batch_size = input_seqs.size(0)
+        max_input_len = input_seqs.size(1)
         #mel_target [batch_size,  max_target_length / hp.outputs_per_step, decoder_output_size]
         if mel_target is None or target_lens is None:
             assert hp.use_gta_mode == False, 'if use_gta_mode == True, please provide with target'
-            max_target_length = self.max_length / hp.outputs_per_step
+            max_target_len = self.max_length / hp.outputs_per_step
         else:
-            max_target_length = max(target_lens) / hp.outputs_per_step
-        self.encoder.initialize(input_lens)
-        encoder_outputs = self.encoder(input_seqs, input_lens)
-        self.decoder.attn.initialize(batch_size, max_target_length, encoder_outputs)
+            max_target_len = max(target_lens) / hp.outputs_per_step
+        self.encoder.initialize(batch_size, max_input_len)
+        encoder_outputs = self.encoder(input_seqs)
+        self.decoder.attn.initialize(batch_size, max_target_len, encoder_outputs)
         decoder_inputs = torch.zeros(batch_size, 1, self.decoder.lstm_input_size)
         #initial decoder hidden state
-        decoder_hidden = torch.zeros(batch_size, hp.decoder_lstm_layers, hp.decoder_lstm_units)
-        decoder_cell = torch.zeros(batch_size, hp.decoder_lstm_layers, hp.decoder_lstm_units)
-        decoder_outputs = torch.zeros(batch_size, max_target_length, self.decoder.decoder_output_size)
-        self.postnet.initialize(self.decoder.decoder_output_size, max_target_length)
-        stop_token_prediction = torch.zeros(batch_size, max_target_length, hp.outputs_per_step)
+        decoder_hidden = torch.zeros(batch_size, self.decoder.decoder_lstm_layers, self.decoder.decoder_lstm_units)
+        decoder_cell = torch.zeros(batch_size, self.decoder.decoder_lstm_layers, self.decoder.decoder_lstm_units)
+        decoder_outputs = torch.zeros(batch_size, max_target_len, self.decoder.decoder_output_size)
+        self.postnet.initialize(self.decoder.decoder_output_size, max_target_len)
+        stop_token_prediction = torch.zeros(batch_size, max_target_len, hp.outputs_per_step)
 
-        for t in range(max_target_length / hp.outputs_per_step):
+        for t in range(max_target_len / hp.outputs_per_step):
             decoder_output, stop_token_output, decoder_hidden, decoder_cell_state = \
                 self.decoder(decoder_inputs, decoder_hidden, decoder_cell_state)
             decoder_outputs[:, t, :] = torch.squeeze(decoder_output, 1)
@@ -97,20 +99,54 @@ class Encoder(nn.Module):
     def __init__(self, max_length):
         super(Encoder, self).__init__()
 
-    def initialize(self, max_length):
-        self.embedding = nn.Embedding(get_vocab_size(), hp.embedding_dim)
-        self.encoder_conv = EncoderConvlutions(max_length, hp.encoder_conv_layers, hp.embedding_dim, hp.encoder_conv_channels)
-        self.lstm = nn.LSTM(hp.encoder_conv_channels, hp.encoder_lstm_units, batch_first=True, bidirectional=True)
-        self.hidden_size = hp.encoder_lstm_units
+    def initialize(self, max_time, batch_size):
+        self.max_time = max_time
+        self.batch_size = batch_size
+        self.embedding = nn.Embedding(get_vocab_size(), self.embedding_dim)
+        self.encoder_conv = EncoderConvlutions(max_time, self.encoder_conv_layers, self.embedding_dim, self.encoder_conv_channels)
+        self.forward_lstm_cell = nn.LSTMCell(self.encoder_conv_channels, self.encoder_lstm_units)
+        self.backward_lstm_cell = nn.LSTMCell(self.encoder_conv_channels, self.encoder_lstm_units)
+        self.zoneout_lstm = ZoneoutRNN(self.forward_lstm_cell, self.backward_lstm_cell, (hp.zoneout_prob_cells, hp.zoneout_prob_states))
+    @property
+    def encoder_conv_layers(self):
+        return hp.encoder_conv_layers
 
-    def forward(self, input_seqs, input_lens, h_0=None, c_0=None):
+    @property
+    def encoder_conv_channels(self):
+        return hp.encoder_conv_channels
+
+    @property
+    def embedding_dim(self):
+        return hp.embedding_dim
+
+    @property
+    def encoder_lstm_units(self):
+        return hp.encoder_lstm_units
+
+    def forward(self, input_seqs):
         embedded = self.embedding(input_seqs)
         conv_outputs = self.encoder_conv(embedded)
-        packed = utils.pack_padded_sequence(conv_outputs, input_lens, batch_first=True)
-        outputs, (hn, cn) = self.lstm(packed, (h_0, c_0))
-        outputs, output_lengths = utils.pad_packed_sequence(outputs)
+        outputs = torch.zeros([self.batch_size, self.max_time, self.zoneout_lstm.hidden_size * 2])
+        forward_h = torch.zeros(self.batch_size, self.zoneout_lstm.hidden_size)
+        forward_c = torch.zeros(self.batch_size, self.zoneout_lstm.hidden_size)
+        forward_state = (forward_h, forward_c)
+        backward_h = torch.zeros(self.batch_size, self.zoneout_lstm.hidden_size)
+        backward_c = torch.zeros(self.batch_size, self.zoneout_lstm.hidden_size)
+        backward_state = (backward_h, backward_c)
+        for i in range(self.max_time):
+            forward_input = conv_outputs[:, i, :]
+            backward_input = conv_outputs[:, self.max_time - (i + 1), :]
+            forward_output, backward_output, \
+            forward_new_state, backward_new_state = self.zoneout_lstm(forward_input,
+                                                                backward_input,
+                                                                forward_state,
+                                                                backward_state)
+            forward_state = forward_new_state
+            backward_state = backward_new_state
+            outputs[:, i, :self.zoneout_lstm.hidden_size] = forward_output
+            outputs[:, self.max_time - (i + 1),self.zoneout_lstm.hidden_size:] = backward_output
+
         #output of shape (seq_len, batch, num_directions * hidden_size)
-        outputs = outputs[:, :, self.hidden_size] + outputs[:, :, self.hidden_size:]
         return outputs
 
 class PreNet(nn.Module):
@@ -140,6 +176,7 @@ class LocationSensitiveSoftAttention(nn.Module):
         self.alignment = torch.zeros(batch_size, max_time)
         self.context_vector = torch.zeros(batch_size, 1, self.num_units)
         self.memoery = self.memoery_layer(memoery)
+
     def  _smoothing_normalization(self, e):
         return torch.sigmoid(e) / torch.sum(torch.sigmoid(e), -1, keepdim=True)
     def forward(self, query, state):
@@ -168,18 +205,36 @@ class LocationSensitiveSoftAttention(nn.Module):
         return self.context_vector
 
 class Decoder(nn.Module):
-    def __init__(self, prenet_input_size = hp.num_mels * hp.outputs_per_step, lstm_input_size = (hp.num_mels * hp.outputs_per_step + hp.attention_depth),
-                 linear_prejection_activation=None, stop_prejection_activation=nn.Sigmoid):
+    def __init__(self, linear_prejection_activation=None, stop_prejection_activation=nn.Sigmoid):
         super(Decoder, self).__init__()
-        self.lstm_input_size = lstm_input_size
-        self.decoder_output_size = prenet_input_size
-        self.prenet = PreNet(prenet_input_size)
-        self.lstm = nn.LSTM(lstm_input_size, hp.decoder_lstm_units, hp.decoder_lstm_layers, batch_first=True)
-        self.attn = LocationSensitiveSoftAttention(hp.deocder_lstm_units, hp.attention_depth)
-        self.linear_projection = nn.Linear(hp.attention_depth + hp.decoder_lstm_layers, self.decoder_output_size)
+        self.prenet = PreNet(self.prenet_input_size)
+        self.lstm = nn.LSTM(self.lstm_input_size, self.decoder_lstm_units, self.decoder_lstm_layers, batch_first=True)
+        self.attn = LocationSensitiveSoftAttention(self.decoder_lstm_units, hp.attention_depth)
+        self.linear_projection = nn.Linear(hp.attention_depth + self.decoder_lstm_layers, self.decoder_output_size)
         self.linear_projection_activation = linear_prejection_activation
         self.stop_projection_activation = stop_prejection_activation
-        self.stop_projection = nn.Linear(hp.attention_depth + hp.decoder_lstm_layers, hp.outputs_per_step)
+        self.stop_projection = nn.Linear(hp.attention_depth + self.decoder_lstm_layers, hp.outputs_per_step)
+
+    @property
+    def decoder_lstm_units(self):
+        return hp.decoder_lstm_units
+
+    @property
+    def decoder_lstm_layers(self):
+        return hp.decoder_lstm_layers
+
+    @property
+    def lstm_input_size(self):
+        return hp.num_mels * hp.outputs_per_step + hp.attention_depth
+
+    @property
+    def prenet_input_size(self):
+        return hp.num_mels * hp.outputs_per_step
+
+    @property
+    def decoder_output_size(self):
+        return hp.num_mels * hp.outputs_per_step
+
     def forward(self, input_seqs, last_hidden, last_cell):
         prenet_output = self.prenet(input_seqs)
         last_context_vector = self.attn.context_vector
