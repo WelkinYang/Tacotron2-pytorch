@@ -8,11 +8,12 @@ from ZoneoutRNN import ZoneoutRNN
 import math
 
 class Tacotron(nn.Module):
-    def __init__(self, encoder, decoder, postnet, max_length=1000):
+    def __init__(self, encoder, decoder, postnet, PostCBHG=None, max_length=1000):
         super(Tacotron, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.postnet = postnet
+        self.PostCBHG = PostCBHG
         self.max_length = max_length
 
     @property
@@ -74,3 +75,8 @@ class Tacotron(nn.Module):
 
         postnet_outputs = self.postnet(decoder_outputs)
         mel_outputs = decoder_outputs + postnet_outputs
+
+        if self._use_linear_spec:
+            self.post_cbhg.initialize(self.decoder.decoder_output_size, batch_size, max_target_len)
+            expand_outputs = self.PostCBHG(mel_outputs)
+

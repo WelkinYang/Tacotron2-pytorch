@@ -6,18 +6,27 @@ from data_utils import get_vocab_size
 from ZoneoutRNN import  ZoneoutRNN
 import math
 
-def _compute_same_padding(kernel_size, input_length):
-    #when stride == 1, dilation == 1, groups == 1
-    #Lout = [(Lin + 2 * padding - (kernel_size - 1) - 1) + 1] = [Lin + 2 * padding - kernel_size + 1]
-    #padding = (Lout + (kernel_size - 1) - Lin) / 2 = (kernel_size - 1) / 2
-    return math.ceil((kernel_size - 1) / 2)
+def _compute_same_padding(kernel_size, input_length, dilation=2):
+    #when stride == 1, dilation == 2, groups == 1
+    #Lout = [(Lin + 2 * padding - dilation * (kernel_size - 1) - 1) + 1]
+    #padding = dilation * (kernel_size - 1) / 2
+    return int(dilation * (kernel_size - 1) / 2)
+
+def Conv1d(self, inputs, conv, activation=None):
+    inputs = torch.transpose(inputs, 1, 2)
+    conv1d_output = conv(inputs)
+    batch_norm_output = self.batch_norm(conv1d_output)
+    batch_norm_output = torch.transpose(batch_norm_output, 1 ,2)
+    if activation is not None:
+        batch_norm_output = activation(batch_norm_output)
+    return F.dropout(batch_norm_output, p=hp.dropout_rate, training=self.training)
 
 class EncoderConvlutions(nn.Module):
     def __init__(self, max_length, conv_in_channels, activation=nn.ReLU()):
         super(EncoderConvlutions, self).__init__()
         self.activation = activation
-        self.conv1 = nn.Conv1d(conv_in_channels, self.conv_out_channels, kernel_size=self.kernel_size, padding=_compute_same_padding(self.kernel_size, max_length))
-        self.conv2 = nn.Conv1d(self.conv_out_channels, self.conv_out_channels, kernel_size=self.kernel_size, padding=_compute_same_padding(self.kernel_size, max_length))
+        self.conv1 = nn.Conv1d(conv_in_channels, self.conv_out_channels, kernel_size=self.kernel_size, stride=1, dilation=2, padding=_compute_same_padding(self.kernel_size, max_length))
+        self.conv2 = nn.Conv1d(self.conv_out_channels, self.conv_out_channels, kernel_size=self.kernel_size, stride=1, dilation=2, padding=_compute_same_padding(self.kernel_size, max_length))
         self.batch_norm = nn.BatchNorm1d(self.conv_out_channels)
     @property
     def kernel_size(self):
@@ -31,21 +40,15 @@ class EncoderConvlutions(nn.Module):
     def conv_out_channels(self):
         return hp.encoder_conv_channels
 
-    def Conv1d(self, inputs, conv):
-        conv1d_output = conv(inputs)
-        batch_norm_output = self.batch_norm(conv1d_output)
-        if self.activation is not None:
-            batch_norm_output = self.activation(batch_norm_output)
-        return F.dropout(batch_norm_output, p=hp.dropout_rate, training=self.training)
     def forward(self, inputs):
         # the Conv1d of pytroch chanages the channels at the 1 dim
         # [batch_size, max_time, feature_dims] -> [batch_size, feature_dims, max_time]
         x = torch.transpose(inputs, 1, 2)
         for i in range(self.conv_layers):
             if i == 0:
-                x = self.Conv1d(x, self.conv1)
+                x = Conv1d(x, self.conv1, self.activation)
             else:
-                x = self.Conv1d(x, self.conv2)
+                x = Conv1d(x, self.conv2, self.activation)
         outputs = torch.transpose(x, 1, 2)
         return outputs
 
@@ -118,14 +121,14 @@ class LocationSensitiveSoftAttention(nn.Module):
         self.location_layer = torch.nn.Linear(hp.attention_filters, self.num_units)
 
         self.compute_energy = nn.Linear(self.num_units, self.num_units)
-        self.v_a = torch.nn.init.xavier_normal(torch.empty(1, self.num_units))
+        self.v_a = torch.nn.init.xavier_normal_(torch.empty(1, self.num_units))
 
     def initialize(self, batch_size, max_time, memoery):
         self.max_time = max_time
         self.alignment = torch.zeros(batch_size, max_time)
         self.context_vector = torch.zeros(batch_size, 1, self.num_units)
         self.memoery = self.memoery_layer(memoery)
-        self.location_convolution = nn.Conv1d(1, hp.attention_filters, kernel_size=hp.attention_kernel,
+        self.location_convolution = nn.Conv1d(1, hp.attention_filters, kernel_size=hp.attention_kernel, stride=1, dilation=2,
                                               padding=_compute_same_padding(self.kernel_size, self.max_time))
 
     @property
@@ -219,13 +222,14 @@ class Decoder(nn.Module):
 class PostNet(nn.Module):
     def __init__(self):
         super(PostNet, self).__init__()
-    def initialize(self, in_channels, max_length):
-        self.conv1 = nn.Conv1d(in_channels, self.out_channels, kernel_size=self.kernel_size,
+    def initialize(self, in_channels, max_length, activation=nn.ReLU()):
+        self.conv1 = nn.Conv1d(in_channels, self.out_channels, kernel_size=self.kernel_size, stride=1, dilation=2,
                                padding=_compute_same_padding(self.kernel_size, max_length))
-        self.conv2 = nn.Conv1d(self.out_channels, self.out_channels, kernel_size=self.kernel_size,
+        self.conv2 = nn.Conv1d(self.out_channels, self.out_channels, kernel_size=self.kernel_size, stride=1, dilation=2,
                                padding=_compute_same_padding(self.kernel_size, max_length))
         self.linear = nn.Linear(hp.postnet_conv_channels, in_channels)
         self.batch_norm = nn.BatchNorm1d(self.out_channels)
+        self.activation = activation
     @property
     def out_channels(self):
         return hp.postnet_conv_channels
@@ -237,22 +241,47 @@ class PostNet(nn.Module):
     @property
     def layers(self):
         return hp.postnet_conv_layers
-    def Conv1d(self, inputs, cur_layer, conv, activation=None):
-        if cur_layer < self.layers - 1:
-            activation = torch.tanh
-        inputs = torch.transpose(inputs, 1, 2)
-        conv1d_output = conv(inputs)
-        batch_norm_output = self.batch_norm(conv1d_output)
-        batch_norm_output = torch.transpose(batch_norm_output, 1 ,2)
-        if activation is not None:
-            batch_norm_output = activation(batch_norm_output)
-        return F.dropout(batch_norm_output, p=hp.dropout_rate, training=self.training)
+
     def forward(self, inputs):
         x = inputs
         for i in range(self.layers):
             if i == 0:
-                x = self.Conv1d(x, i, self.conv1)
+                x = Conv1d(x, self.conv1, self.activation)
             else:
-                x = self.Conv1d(x, i, self.conv2)
+                if i < self.layers - 1:
+                    x = Conv1d(x, self.conv2, self.activation)
+                else:
+                    x = Conv1d(x, self.conv2)
         x = self.linear(x)
         return x
+
+class PostCBHG(nn.Module):
+    def __init__(self):
+        super(PostCBHG, self).__init__()
+    def initialize(self, input_channels, input_length, K=8, units=128, activation=[nn.ReLU(), nn.Sigmoid()]):
+        self.convs_bank = [nn.Conv1d(in_channels=input_channels, out_channels=units, kernel_size=k, stride=1, dilation=2,
+                                padding=_compute_same_padding(kernel_size=k, input_length=input_length))
+                      for k in range(1, K + 1)]
+        self.max_pool = nn.MaxPool1d(kernel_size=2, stride=1, dilation=2,
+                                     padding=_compute_same_padding(kernel_size=2, input_length=input_length))
+
+        self.conv1 = nn.Conv1d(in_channels=units, out_channels=256, kernel_size=3, stride=1, dilation=2,
+                               padding=_compute_same_padding(kernel_size=3, input_length=input_length))
+        self.conv2 = nn.Conv1d(in_channels=256, out_channels=input_channels, kernel_size=3, stride=1, dilation=2,
+                               padding=_compute_same_padding(kernel_size=3, input_length=input_length))
+
+        self.highwaynet = HighwayNet(input_channels)
+
+        self.lstm = nn.GRU(units, units, batch_first=True, bidirectional=True)
+    def forward(self, input):
+        pass
+
+class HighwayNet(nn.Module):
+    def __init__(self, input_size, units=128):
+        self.H = nn.Linear(input_size, units)
+        self.T = nn.Linear(input_size, units, bias=nn.init.constant_(torch.empty(1, 1, units), -0.1))
+
+    def forward(self, input, activation):
+        H_output = activation[0](self.H(input))
+        T_output = activation[1](self.T(input))
+        return H_output * T_output + input * (1.0 - T_output)
