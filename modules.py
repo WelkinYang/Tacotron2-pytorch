@@ -6,7 +6,7 @@ from data_utils import get_vocab_size
 from ZoneoutRNN import  ZoneoutRNN
 import math
 
-def _compute_same_padding(kernel_size, input_length, dilation=2):
+def compute_same_padding(kernel_size, input_length, dilation=2):
     #when stride == 1, dilation == 2, groups == 1
     #Lout = [(Lin + 2 * padding - dilation * (kernel_size - 1) - 1) + 1]
     #padding = dilation * (kernel_size - 1) / 2
@@ -25,8 +25,8 @@ class EncoderConvlutions(nn.Module):
     def __init__(self, max_length, conv_in_channels, activation=nn.ReLU()):
         super(EncoderConvlutions, self).__init__()
         self.activation = activation
-        self.conv1 = nn.Conv1d(conv_in_channels, self.conv_out_channels, kernel_size=self.kernel_size, stride=1, dilation=2, padding=_compute_same_padding(self.kernel_size, max_length))
-        self.conv2 = nn.Conv1d(self.conv_out_channels, self.conv_out_channels, kernel_size=self.kernel_size, stride=1, dilation=2, padding=_compute_same_padding(self.kernel_size, max_length))
+        self.conv1 = nn.Conv1d(conv_in_channels, self.conv_out_channels, kernel_size=self.kernel_size, stride=1, dilation=2, padding=compute_same_padding(self.kernel_size, max_length))
+        self.conv2 = nn.Conv1d(self.conv_out_channels, self.conv_out_channels, kernel_size=self.kernel_size, stride=1, dilation=2, padding=compute_same_padding(self.kernel_size, max_length))
         self.batch_norm = nn.BatchNorm1d(self.conv_out_channels)
     @property
     def kernel_size(self):
@@ -112,64 +112,7 @@ class PreNet(nn.Module):
             output = self.activation(linear(x))
             return F.dropout(output, p=hp.dropout_rate, training=self.training)
 
-class LocationSensitiveSoftAttention(nn.Module):
-    def __init__(self, hidden_size, cumulate_weights=True):
-        super(LocationSensitiveSoftAttention, self).__init__()
-        self._cumulate = cumulate_weights
-        self.query_layer = torch.nn.Linear(hidden_size, self.num_units)
-        self.memoery_layer = torch.nn.Linear(hp.encoder_lstm_units*2, self.num_units)
-        self.location_layer = torch.nn.Linear(hp.attention_filters, self.num_units)
 
-        self.compute_energy = nn.Linear(self.num_units, self.num_units)
-        self.v_a = torch.nn.init.xavier_normal_(torch.empty(1, self.num_units))
-
-    def initialize(self, batch_size, max_time, memoery):
-        self.max_time = max_time
-        self.alignment = torch.zeros(batch_size, max_time)
-        self.context_vector = torch.zeros(batch_size, 1, self.num_units)
-        self.memoery = self.memoery_layer(memoery)
-        self.location_convolution = nn.Conv1d(1, hp.attention_filters, kernel_size=hp.attention_kernel, stride=1, dilation=2,
-                                              padding=_compute_same_padding(self.kernel_size, self.max_time))
-
-    @property
-    def kernel_size(self):
-        return hp.attention_kernel
-    @property
-    def num_units(self):
-        return hp.attention_depth
-
-    def  _smoothing_normalization(self, e):
-        return torch.sigmoid(e) / torch.sum(torch.sigmoid(e), -1, keepdim=True)
-
-    def forward(self, query, state):
-        #query [batch_size, lstm_layers, hidden_size] -> [batch_size, 1, attention_depth(num_units)]
-        processed_query = self.query_layer(query)[:, 0:1, :]
-        #state [batch_size, max_time] ->  [batch_size, max_time, attention_depth(num_units)]
-        #[batch_size, max_time, 1]
-        expanded_alignments = torch.unsqueeze(state, 2)
-        #[batch_size, 1, max_time] transpose because of the strange conv api
-        expanded_alignments = torch.transpose(expanded_alignments, 1, 2)
-        #[batch_size, hp.attention_filters, max_time]
-        f = self.location_convolution(expanded_alignments)
-        #[batch_size, max_time, hp.attention_filters]
-        f = torch.transpose(f, 1, 2)
-        # [batch_size, max_time, attention_depth(num_units)]
-        processed_location_features = self.location_layer(f)
-
-        #energy [batch_size, max_time]
-        tmp = processed_query + processed_location_features + self.memoery
-        energy = torch.sum(self.v_a * torch.tanh(self.compute_energy(processed_query + processed_location_features + self.memoery)), 2)
-        alignment = self._smoothing_normalization(energy)
-
-        if self._cumulate:
-            self.alignment += alignment
-        else:
-            self.alignment = alignment
-        #expanded_alignments [batch_size, 1, max_time]
-        expanded_alignments = torch.unsqueeze(self.alignment, 1)
-        #[batch_size, 1, max_time] * [batch_size, max_time, attention_depth] = [batch_size, 1, attention_depth]
-        self.context_vector = torch.matmul(expanded_alignments, self.memoery)
-        return self.context_vector
 
 class Decoder(nn.Module):
     def __init__(self, linear_prejection_activation=None, stop_prejection_activation=nn.Sigmoid()):
@@ -224,9 +167,9 @@ class PostNet(nn.Module):
         super(PostNet, self).__init__()
     def initialize(self, in_channels, max_length, activation=nn.ReLU()):
         self.conv1 = nn.Conv1d(in_channels, self.out_channels, kernel_size=self.kernel_size, stride=1, dilation=2,
-                               padding=_compute_same_padding(self.kernel_size, max_length))
+                               padding=compute_same_padding(self.kernel_size, max_length))
         self.conv2 = nn.Conv1d(self.out_channels, self.out_channels, kernel_size=self.kernel_size, stride=1, dilation=2,
-                               padding=_compute_same_padding(self.kernel_size, max_length))
+                               padding=compute_same_padding(self.kernel_size, max_length))
         self.linear = nn.Linear(hp.postnet_conv_channels, in_channels)
         self.batch_norm = nn.BatchNorm1d(self.out_channels)
         self.activation = activation
@@ -260,17 +203,17 @@ class PostCBHG(nn.Module):
         super(PostCBHG, self).__init__()
     def initialize(self, input_channels, input_length, K=8, units=128, activation=[nn.ReLU(), nn.Sigmoid()]):
         self.convs_bank = [nn.Conv1d(in_channels=input_channels, out_channels=units, kernel_size=k, stride=1, dilation=2,
-                                padding=_compute_same_padding(kernel_size=k, input_length=input_length))
+                                padding=compute_same_padding(kernel_size=k, input_length=input_length))
                      if k == 1 else nn.Conv1d(in_channels=units, out_channels=units, kernel_size=k, stride=1, dilation=2,
-                                padding=_compute_same_padding(kernel_size=k, input_length=input_length))
+                                padding=compute_same_padding(kernel_size=k, input_length=input_length))
                            for k in range(1, K + 1)]
         self.max_pool = nn.MaxPool1d(kernel_size=2, stride=1, dilation=2,
-                                     padding=_compute_same_padding(kernel_size=2, input_length=input_length))
+                                     padding=compute_same_padding(kernel_size=2, input_length=input_length))
 
         self.conv1 = nn.Conv1d(in_channels=units, out_channels=256, kernel_size=3, stride=1, dilation=2,
-                               padding=_compute_same_padding(kernel_size=3, input_length=input_length))
+                               padding=compute_same_padding(kernel_size=3, input_length=input_length))
         self.conv2 = nn.Conv1d(in_channels=256, out_channels=input_channels, kernel_size=3, stride=1, dilation=2,
-                               padding=_compute_same_padding(kernel_size=3, input_length=input_length))
+                               padding=compute_same_padding(kernel_size=3, input_length=input_length))
 
         self.gru = nn.GRU(units, units, batch_first=True, bidirectional=True)
         self.activation = activation
