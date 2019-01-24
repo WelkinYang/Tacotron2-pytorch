@@ -13,7 +13,7 @@ class Tacotron(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.postnet = postnet
-        self.PostCBHG = PostCBHG
+        self.post_cbhg = PostCBHG
         self.max_length = max_length
 
     @property
@@ -78,6 +78,6 @@ class Tacotron(nn.Module):
 
         if self._use_linear_spec:
             self.post_cbhg.initialize(self.decoder.decoder_output_size, batch_size, max_target_len)
-            expand_outputs = self.PostCBHG(mel_outputs)
+            expand_outputs = self.post_cbhg(mel_outputs)
             linear_outputs = F.linear(expand_outputs, weight=torch.nn.init.normal_(torch.empty(hp.num_freq, expand_outputs.shape[2])))
-
+            print(linear_outputs.shape)

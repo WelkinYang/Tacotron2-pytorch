@@ -8,14 +8,14 @@ from attention import LocationSensitiveSoftAttention
 from data_utils import compute_same_padding
 import math
 
-def Conv1d(self, inputs, conv, activation=None):
+def Conv1d(inputs, conv, batch_norm, is_training, activation=None):
     inputs = torch.transpose(inputs, 1, 2)
     conv1d_output = conv(inputs)
-    batch_norm_output = self.batch_norm(conv1d_output)
+    batch_norm_output = batch_norm(conv1d_output)
     batch_norm_output = torch.transpose(batch_norm_output, 1 ,2)
     if activation is not None:
         batch_norm_output = activation(batch_norm_output)
-    return F.dropout(batch_norm_output, p=hp.dropout_rate, training=self.training)
+    return F.dropout(batch_norm_output, p=hp.dropout_rate, training=is_training)
 
 class EncoderConvlutions(nn.Module):
     def __init__(self, max_length, conv_in_channels, activation=nn.ReLU()):
@@ -41,13 +41,13 @@ class EncoderConvlutions(nn.Module):
     def forward(self, inputs):
         # the Conv1d of pytroch chanages the channels at the 1 dim
         # [batch_size, max_time, feature_dims] -> [batch_size, feature_dims, max_time]
-        x = torch.transpose(inputs, 1, 2)
+        x = inputs
         for i in range(self.conv_layers):
             if i == 0:
-                x = Conv1d(x, self.conv1, self.activation)
+                x = Conv1d(x, self.conv1, self.batch_norm, self.training, self.activation)
             else:
-                x = Conv1d(x, self.conv2, self.activation)
-        outputs = torch.transpose(x, 1, 2)
+                x = Conv1d(x, self.conv2, self.batch_norm, self.training, self.activation)
+        outputs = x
         return outputs
 
 class Encoder(nn.Module):
@@ -187,12 +187,12 @@ class PostNet(nn.Module):
         x = inputs
         for i in range(self.layers):
             if i == 0:
-                x = Conv1d(x, self.conv1, self.activation)
+                x = Conv1d(x, self.conv1, self.batch_norm, self.training, self.activation)
             else:
                 if i < self.layers - 1:
-                    x = Conv1d(x, self.conv2, self.activation)
+                    x = Conv1d(x, self.conv2, self.batch_norm, self.training, self.activation)
                 else:
-                    x = Conv1d(x, self.conv2)
+                    x = Conv1d(x, self.conv2, self.batch_norm, self.training)
         x = self.linear(x)
         return x
 
@@ -202,13 +202,11 @@ class PostCBHG(nn.Module):
     def initialize(self, input_channels, input_length, K=8, units=128, activation=[nn.ReLU(), nn.Sigmoid()]):
         self.convs_bank = [nn.Conv1d(in_channels=input_channels, out_channels=units, kernel_size=k, stride=1, dilation=2,
                                 padding=compute_same_padding(kernel_size=k, input_length=input_length))
-                     if k == 1 else nn.Conv1d(in_channels=units, out_channels=units, kernel_size=k, stride=1, dilation=2,
-                                padding=compute_same_padding(kernel_size=k, input_length=input_length))
                            for k in range(1, K + 1)]
         self.max_pool = nn.MaxPool1d(kernel_size=2, stride=1, dilation=2,
                                      padding=compute_same_padding(kernel_size=2, input_length=input_length))
 
-        self.conv1 = nn.Conv1d(in_channels=units, out_channels=256, kernel_size=3, stride=1, dilation=2,
+        self.conv1 = nn.Conv1d(in_channels=units*K, out_channels=256, kernel_size=3, stride=1, dilation=2,
                                padding=compute_same_padding(kernel_size=3, input_length=input_length))
         self.conv2 = nn.Conv1d(in_channels=256, out_channels=input_channels, kernel_size=3, stride=1, dilation=2,
                                padding=compute_same_padding(kernel_size=3, input_length=input_length))
@@ -218,14 +216,14 @@ class PostCBHG(nn.Module):
     def forward(self, inputs):
         # Convolution bank: concatenate on the last axis to stack channels from all convolutions
         conv_outputs = torch.cat([
-            Conv1d(inputs, conv, activation=self.activation[0])
+            Conv1d(inputs, conv, nn.BatchNorm1d(conv.out_channels), self.training, activation=self.activation[0])
             for conv in self.convs_bank], dim=-1)
 
         # Maxpooling:
         maxpool_output = self.max_pool(conv_outputs)
         # Two projection layers:
-        proj1_output = Conv1d(maxpool_output, self.conv1, activation=self.activation[0])
-        proj2_output = Conv1d(proj1_output, self.conv2)
+        proj1_output = Conv1d(maxpool_output, self.conv1, nn.BatchNorm1d(self.conv1.out_channels), self.training, activation=self.activation[0])
+        proj2_output = Conv1d(proj1_output, self.conv2, nn.BatchNorm1d(self.conv2.out_channels), self.training)
 
         # Residual connection:
         highway_input = proj2_output + inputs
@@ -236,7 +234,7 @@ class PostCBHG(nn.Module):
 
         # 4-layer HighwayNet:
         for i in range(4):
-            highway_input = self.highwaynet(highway_input, self.activation)
+            highway_input = highwaynet(highway_input, self.activation)
         rnn_input = highway_input
 
         # Bidirectional RNN
