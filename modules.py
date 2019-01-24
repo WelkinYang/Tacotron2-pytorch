@@ -4,13 +4,9 @@ import torch.nn.functional as F
 from hparams import hparams as hp
 from data_utils import get_vocab_size
 from ZoneoutRNN import  ZoneoutRNN
+from attention import LocationSensitiveSoftAttention
+from data_utils import compute_same_padding
 import math
-
-def compute_same_padding(kernel_size, input_length, dilation=2):
-    #when stride == 1, dilation == 2, groups == 1
-    #Lout = [(Lin + 2 * padding - dilation * (kernel_size - 1) - 1) + 1]
-    #padding = dilation * (kernel_size - 1) / 2
-    return int(dilation * (kernel_size - 1) / 2)
 
 def Conv1d(self, inputs, conv, activation=None):
     inputs = torch.transpose(inputs, 1, 2)
@@ -253,5 +249,3 @@ def highwaynet(inputs, activation, units=128):
     T = F.linear(inputs, weight=torch.nn.init.normal_(torch.empty(units, inputs.size(2))), bias=nn.init.constant_(torch.empty(1, 1, units), -0.1))
     T = activation[1](T)
     return H * T + inputs * (1.0 - T)
-
-

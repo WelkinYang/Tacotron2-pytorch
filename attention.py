@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from hparams import hparams as hp
-from modules import compute_same_padding
+from data_utils import compute_same_padding
 
 class LocationSensitiveSoftAttention(nn.Module):
     def __init__(self, hidden_size, cumulate_weights=True):
