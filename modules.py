@@ -261,7 +261,9 @@ class PostCBHG(nn.Module):
     def initialize(self, input_channels, input_length, K=8, units=128, activation=[nn.ReLU(), nn.Sigmoid()]):
         self.convs_bank = [nn.Conv1d(in_channels=input_channels, out_channels=units, kernel_size=k, stride=1, dilation=2,
                                 padding=_compute_same_padding(kernel_size=k, input_length=input_length))
-                      for k in range(1, K + 1)]
+                     if k == 1 else nn.Conv1d(in_channels=units, out_channels=units, kernel_size=k, stride=1, dilation=2,
+                                padding=_compute_same_padding(kernel_size=k, input_length=input_length))
+                           for k in range(1, K + 1)]
         self.max_pool = nn.MaxPool1d(kernel_size=2, stride=1, dilation=2,
                                      padding=_compute_same_padding(kernel_size=2, input_length=input_length))
 
@@ -270,12 +272,37 @@ class PostCBHG(nn.Module):
         self.conv2 = nn.Conv1d(in_channels=256, out_channels=input_channels, kernel_size=3, stride=1, dilation=2,
                                padding=_compute_same_padding(kernel_size=3, input_length=input_length))
 
-        self.highwaynet = HighwayNet(input_channels)
+        self.gru = nn.GRU(units, units, batch_first=True, bidirectional=True)
+        self.activation = activation
+    def forward(self, inputs):
+        # Convolution bank: concatenate on the last axis to stack channels from all convolutions
+        conv_outputs = torch.cat([
+            Conv1d(inputs, conv, activation=self.activation[0])
+            for conv in self.convs_bank], dim=-1)
 
-        self.lstm = nn.GRU(units, units, batch_first=True, bidirectional=True)
-    def forward(self, input):
-        pass
+        # Maxpooling:
+        maxpool_output = self.max_pool(conv_outputs)
+        # Two projection layers:
+        proj1_output = Conv1d(maxpool_output, self.conv1, activation=self.activation[0])
+        proj2_output = Conv1d(proj1_output, self.conv2)
 
+        # Residual connection:
+        highway_input = proj2_output + inputs
+
+        # Handle dimensionality mismatch:
+        if highway_input.shape[2] != 128:
+            highway_input = F.linear(highway_input, weight=torch.nn.init.normal_(torch.empty(128, highway_input.shape[2])))
+
+        # 4-layer HighwayNet:
+        for i in range(4):
+            highway_input = self.highwaynet(highway_input)
+        rnn_input = highway_input
+
+        # Bidirectional RNN
+        outputs, states = self.gru(rnn_input)
+        return outputs
+
+'''
 class HighwayNet(nn.Module):
     def __init__(self, input_size, units=128):
         self.H = nn.Linear(input_size, units)
@@ -285,3 +312,12 @@ class HighwayNet(nn.Module):
         H_output = activation[0](self.H(input))
         T_output = activation[1](self.T(input))
         return H_output * T_output + input * (1.0 - T_output)
+'''
+def highwaynet(inputs, activation, units=128):
+    H = F.linear(inputs, weight=torch.nn.init.normal_(torch.empty(units, inputs.size(2))))
+    H = activation[0](H)
+    T = F.linear(inputs, weight=torch.nn.init.normal_(torch.empty(units, inputs.size(2))), bias=nn.init.constant_(torch.empty(1, 1, units), -0.1))
+    T = activation[1](T)
+    return H * T + inputs * (1.0 - T)
+
+

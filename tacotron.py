@@ -79,4 +79,5 @@ class Tacotron(nn.Module):
         if self._use_linear_spec:
             self.post_cbhg.initialize(self.decoder.decoder_output_size, batch_size, max_target_len)
             expand_outputs = self.PostCBHG(mel_outputs)
+            linear_outputs = F.linear(expand_outputs, weight=torch.nn.init.normal_(torch.empty(hp.num_freq, expand_outputs.shape[2])))
 
