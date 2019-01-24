@@ -70,6 +70,7 @@ class Tacotron(nn.Module):
                 self.decoder(decoder_inputs, decoder_hidden, decoder_cell_state)
             decoder_outputs[:, t, :] = torch.squeeze(decoder_output, 1)
             stop_token_prediction[:, t, :] = torch.squeeze(stop_token_output, 1)
+            print(stop_token_output)
             if hp.use_gta_mode:
                 if hp.teacher_forcing_schema == "full":
                     decoder_inputs = mel_target[:, t:t+1, :]
@@ -102,4 +103,16 @@ class Tacotron(nn.Module):
 
         #calculate losses
         if self.training:
+            decoder_loss = F.mse_loss(decoder_outputs, mel_target)
+            mel_loss = F.mse_loss(mel_outputs, mel_target)
+
+            loss = decoder_loss + mel_loss
+
+            if self._use_linear_spec:
+                linear_loss = F.mse_loss(linear_outputs, linear_target)
+                loss += linear_loss
+
+            if self._use_stop_token:
+                stop_token_loss = F.binary_cross_entropy(stop_token_prediction, stop_token_target, reduction='sum')
+
 
