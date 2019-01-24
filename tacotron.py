@@ -24,17 +24,36 @@ class Tacotron(nn.Module):
     def _use_linear_spec(self):
         return hp.use_linear_spec
 
+    @property
+    def _use_stop_token(self):
+        return hp.use_stop_token
+
+    @property
+    def _use_gta_mode(self):
+        return hp.use_gta_mode
+
     def forward(self, input_group, mel_group = None, linear_target=None, stop_token_target=None):
         #input_seqs [batch_size, seq_lens]
         input_seqs, max_input_len = input_group
         mel_target, max_target_len = mel_group
         batch_size = input_seqs.size(0)
+
         #mel_target [batch_size,  max_target_length / hp.outputs_per_step, decoder_output_size]
         if mel_target is None or max_target_len is None:
             assert hp.use_gta_mode == False, 'if use_gta_mode == True, please provide with target'
             max_target_len = math.ceil(self.max_length / hp.outputs_per_step)
         else:
             max_target_len = math.ceil(max_target_len / hp.outputs_per_step)
+
+        if self._use_gta_mode:
+            assert self.training == True, 'When model is evaluating, you can\'t use gta_mode'
+        if self._use_linear_spec and self.training:
+            assert linear_target is not None, 'When model is training and use_linear_spec is True, ' \
+                                              'please apply linear target to calculate loss'
+        if self._use_stop_token and self.training:
+            assert stop_token_target is not None, 'When model is training and use_stop_token is True, ' \
+                                              'please apply stop token target to calculate loss'
+
         self.encoder.initialize(batch_size, max_input_len)
         encoder_outputs = self.encoder(input_seqs)
         self.decoder.attn.initialize(batch_size, max_input_len, encoder_outputs)
@@ -80,4 +99,7 @@ class Tacotron(nn.Module):
             self.post_cbhg.initialize(self.decoder.decoder_output_size, batch_size, max_target_len)
             expand_outputs = self.post_cbhg(mel_outputs)
             linear_outputs = F.linear(expand_outputs, weight=torch.nn.init.normal_(torch.empty(hp.num_freq, expand_outputs.shape[2])))
-            print(linear_outputs.shape)
+
+        #calculate losses
+        if self.training:
+
