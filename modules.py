@@ -25,8 +25,10 @@ class EncoderConvlutions(nn.Module):
     def __init__(self, max_length, conv_in_channels, activation=nn.ReLU()):
         super(EncoderConvlutions, self).__init__()
         self.activation = activation
-        self.conv1 = nn.Conv1d(conv_in_channels, self.conv_out_channels, kernel_size=self.kernel_size, stride=1, dilation=2, padding=compute_same_padding(self.kernel_size, max_length))
-        self.conv2 = nn.Conv1d(self.conv_out_channels, self.conv_out_channels, kernel_size=self.kernel_size, stride=1, dilation=2, padding=compute_same_padding(self.kernel_size, max_length))
+        self.conv1 = nn.Conv1d(conv_in_channels, self.conv_out_channels, kernel_size=self.kernel_size, stride=1, dilation=2,
+                               padding=compute_same_padding(self.kernel_size, max_length))
+        self.conv2 = nn.Conv1d(self.conv_out_channels, self.conv_out_channels, kernel_size=self.kernel_size, stride=1, dilation=2,
+                               padding=compute_same_padding(self.kernel_size, max_length))
         self.batch_norm = nn.BatchNorm1d(self.conv_out_channels)
     @property
     def kernel_size(self):
@@ -245,17 +247,6 @@ class PostCBHG(nn.Module):
         outputs, states = self.gru(rnn_input)
         return outputs
 
-'''
-class HighwayNet(nn.Module):
-    def __init__(self, input_size, units=128):
-        self.H = nn.Linear(input_size, units)
-        self.T = nn.Linear(input_size, units, bias=nn.init.constant_(torch.empty(1, 1, units), -0.1))
-
-    def forward(self, input, activation):
-        H_output = activation[0](self.H(input))
-        T_output = activation[1](self.T(input))
-        return H_output * T_output + input * (1.0 - T_output)
-'''
 def highwaynet(inputs, activation, units=128):
     H = F.linear(inputs, weight=torch.nn.init.normal_(torch.empty(units, inputs.size(2))))
     H = activation[0](H)
