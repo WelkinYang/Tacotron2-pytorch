@@ -236,7 +236,7 @@ class PostCBHG(nn.Module):
 
         # 4-layer HighwayNet:
         for i in range(4):
-            highway_input = self.highwaynet(highway_input)
+            highway_input = self.highwaynet(highway_input, self.activation)
         rnn_input = highway_input
 
         # Bidirectional RNN
