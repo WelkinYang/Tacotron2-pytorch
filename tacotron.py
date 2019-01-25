@@ -16,22 +16,6 @@ class Tacotron(nn.Module):
         self.post_cbhg = PostCBHG
         self.max_length = max_length
 
-    @property
-    def _stop_at_any(self):
-        return hp.stop_at_any
-
-    @property
-    def _use_linear_spec(self):
-        return hp.use_linear_spec
-
-    @property
-    def _use_stop_token(self):
-        return hp.use_stop_token
-
-    @property
-    def _use_gta_mode(self):
-        return hp.use_gta_mode
-
     def forward(self, input_group, mel_group = None, linear_target=None, stop_token_target=None):
         #input_seqs [batch_size, seq_lens]
         input_seqs, max_input_len = input_group
@@ -45,12 +29,12 @@ class Tacotron(nn.Module):
         else:
             max_target_len = math.ceil(max_target_len / hp.outputs_per_step)
 
-        if self._use_gta_mode:
+        if hp.use_gta_mode:
             assert self.training == True, 'When model is evaluating, you can\'t use gta_mode'
-        if self._use_linear_spec and self.training:
+        if hp.use_linear_spec and self.training:
             assert linear_target is not None, 'When model is training and use_linear_spec is True, ' \
                                               'please apply linear target to calculate loss'
-        if self._use_stop_token and self.training:
+        if hp.use_stop_token and self.training:
             assert stop_token_target is not None, 'When model is training and use_stop_token is True, ' \
                                               'please apply stop token target to calculate loss'
 
@@ -70,8 +54,7 @@ class Tacotron(nn.Module):
                 self.decoder(decoder_inputs, decoder_hidden, decoder_cell_state)
             decoder_outputs[:, t, :] = torch.squeeze(decoder_output, 1)
             stop_token_prediction[:, t, :] = torch.squeeze(stop_token_output, 1)
-            print(stop_token_output)
-            if hp.use_gta_mode:
+            if self.training:
                 if hp.teacher_forcing_schema == "full":
                     decoder_inputs = mel_target[:, t:t+1, :]
                 elif hp.teacher_forcing_schema == "semi":
@@ -79,24 +62,24 @@ class Tacotron(nn.Module):
                         decoder_output + mel_target[:, t:t+1, :]
                     ) / 2
                 elif hp.teacher_forcing_schema == "random":
-                    if np.random.random() <= self.teacher_forcing_ratio:
+                    if np.random.random() <= hp.teacher_forcing_ratio:
                         decoder_inputs = mel_target[:, t:t+1, :]
                     else:
                         decoder_inputs = decoder_output
             else:
-                decoder_inputs = decoder_outputs[:, t, :]
-                finished = (torch.round(stop_token_output) != 0)
-                if self._stop_at_any:
-                    finished = (torch.sum(finished) > 0)
+                decoder_inputs = decoder_outputs[:, t:t+1, :]
+                finished = torch.round(stop_token_output)
+                if hp.stop_at_any:
+                    finished = torch.sum(torch.sum(finished, 1) > 0) == batch_size
                 else:
-                    finished = (torch.sum(finished) == finished.size(1))
+                    finished = torch.sum(torch.sum(finished, 1) == hp.outputs_per_step) == batch_size
                 if finished:
                     break
 
         postnet_outputs = self.postnet(decoder_outputs)
         mel_outputs = decoder_outputs + postnet_outputs
 
-        if self._use_linear_spec:
+        if hp.use_linear_spec:
             self.post_cbhg.initialize(self.decoder.decoder_output_size, batch_size, max_target_len)
             expand_outputs = self.post_cbhg(mel_outputs)
             linear_outputs = F.linear(expand_outputs, weight=torch.nn.init.normal_(torch.empty(hp.num_freq, expand_outputs.shape[2])))
@@ -108,11 +91,11 @@ class Tacotron(nn.Module):
 
             loss = decoder_loss + mel_loss
 
-            if self._use_linear_spec:
+            if hp.use_linear_spec:
                 linear_loss = F.mse_loss(linear_outputs, linear_target)
                 loss += linear_loss
 
-            if self._use_stop_token:
+            if hp.use_stop_token:
                 stop_token_loss = F.binary_cross_entropy(stop_token_prediction, stop_token_target, reduction='sum')
                 loss += stop_token_loss
 
