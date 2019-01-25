@@ -1,1 +1,1 @@
-Tacotron2 implemented by pytorch
+Tacotron2 implemented by pytorch(Work in progress)

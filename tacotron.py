@@ -114,5 +114,7 @@ class Tacotron(nn.Module):
 
             if self._use_stop_token:
                 stop_token_loss = F.binary_cross_entropy(stop_token_prediction, stop_token_target, reduction='sum')
+                loss += stop_token_loss
 
+            return loss
 

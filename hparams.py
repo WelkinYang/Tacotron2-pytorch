@@ -88,7 +88,7 @@ hparams = HParams(
     use_vector_quantization=False,
     vq_dim=512,
     use_linear_spec=True,  # Predict mel spec or linear spec
-    use_stop_token=True,
+    use_stop_token=False,
     use_cmudict=False,  # Use CMUDict during training to learn pronunciation of ARPAbet phonemes
 
     use_gta_mode = True, #Use ground_truth_align
