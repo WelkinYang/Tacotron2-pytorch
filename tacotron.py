@@ -100,4 +100,6 @@ class Tacotron(nn.Module):
                 loss += stop_token_loss
 
             return loss
+        else:
+            return mel_outputs
 
