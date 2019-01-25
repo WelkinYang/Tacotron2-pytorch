@@ -9,6 +9,8 @@ from data_utils import compute_same_padding
 import math
 
 def Conv1d(inputs, conv, batch_norm, is_training, activation=None):
+    # the Conv1d of pytroch chanages the channels at the 1 dim
+    # [batch_size, max_time, feature_dims] -> [batch_size, feature_dims, max_time]
     inputs = torch.transpose(inputs, 1, 2)
     conv1d_output = conv(inputs)
     batch_norm_output = batch_norm(conv1d_output)
@@ -39,8 +41,6 @@ class EncoderConvlutions(nn.Module):
         return hp.encoder_conv_channels
 
     def forward(self, inputs):
-        # the Conv1d of pytroch chanages the channels at the 1 dim
-        # [batch_size, max_time, feature_dims] -> [batch_size, feature_dims, max_time]
         x = inputs
         for i in range(self.conv_layers):
             if i == 0:

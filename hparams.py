@@ -91,7 +91,7 @@ hparams = HParams(
     use_stop_token=False,
     use_cmudict=False,  # Use CMUDict during training to learn pronunciation of ARPAbet phonemes
 
-    use_gta_mode = True, #Use ground_truth_align
+    use_gta_mode = False, #Use ground_truth_align
     teacher_forcing_ratio=1.,
     teacher_forcing_schema="full",
 

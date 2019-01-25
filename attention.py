@@ -48,7 +48,6 @@ class LocationSensitiveSoftAttention(nn.Module):
         processed_location_features = self.location_layer(f)
 
         #energy [batch_size, max_time]
-        tmp = processed_query + processed_location_features + self.memoery
         energy = torch.sum(self.v_a * torch.tanh(self.compute_energy(processed_query + processed_location_features + self.memoery)), 2)
         alignment = self._smoothing_normalization(energy)
 
