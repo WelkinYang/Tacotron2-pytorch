@@ -17,17 +17,23 @@ class Tacotron(nn.Module):
         self.max_length = max_length
 
     def forward(self, input_group, mel_group = None, linear_target=None, stop_token_target=None):
-        #input_seqs [batch_size, seq_lens]
-        input_seqs, max_input_len = input_group
-        mel_target, max_target_len = mel_group
-        batch_size = input_seqs.size(0)
+        '''
 
-        #mel_target [batch_size,  max_target_length / hp.outputs_per_step, decoder_output_size]
-        if mel_target is None or max_target_len is None:
-            assert hp.use_gta_mode == False, 'if use_gta_mode == True, please provide with target'
-            max_target_len = math.ceil(self.max_length / hp.outputs_per_step)
+        :param input_group: (input_seqs, max_input_len) input_seqs: [batch_size, max_input_len]
+        :param mel_group: (mel_target, max_target_len) mel_target: [batch_size,  max_target_len, num_mels*hp.outputs_per_step]
+        :param linear_target: [batch_size, max_target_len, num_freq*hp.outputs_per_step]
+        :param stop_token_target: [batch_size, max_target_len] Value is zero indicating that this time step is not the end.
+        :return:
+        '''
+
+        input_seqs, max_input_len = input_group
+        batch_size = input_seqs.size(0)
+        if mel_group is not None:
+            mel_target, max_target_len = mel_group
+            max_target_len = max_target_len
         else:
-            max_target_len = math.ceil(max_target_len / hp.outputs_per_step)
+            assert hp.use_gta_mode == False, 'if use_gta_mode == True, please provide with target'
+            max_target_len = self.max_length
 
         if hp.use_gta_mode:
             assert self.training == True, 'When model is evaluating, you can\'t use gta_mode'
@@ -79,10 +85,11 @@ class Tacotron(nn.Module):
         postnet_outputs = self.postnet(decoder_outputs)
         mel_outputs = decoder_outputs + postnet_outputs
 
+        #calculate linear outputs
         if hp.use_linear_spec:
-            self.post_cbhg.initialize(self.decoder.decoder_output_size, batch_size, max_target_len)
+            self.post_cbhg.initialize(self.decoder.decoder_output_size, max_target_len)
             expand_outputs = self.post_cbhg(mel_outputs)
-            linear_outputs = F.linear(expand_outputs, weight=torch.nn.init.normal_(torch.empty(hp.num_freq, expand_outputs.shape[2])))
+            linear_outputs = F.linear(expand_outputs, weight=torch.nn.init.normal_(torch.empty(hp.num_freq*hp.outputs_per_step, expand_outputs.shape[2])))
 
         #calculate losses
         if self.training:
@@ -101,5 +108,6 @@ class Tacotron(nn.Module):
 
             return loss
         else:
+            #model is eval
             return mel_outputs
 

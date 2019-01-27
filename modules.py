@@ -218,13 +218,11 @@ class PostCBHG(nn.Module):
         conv_outputs = torch.cat([
             Conv1d(inputs, conv, nn.BatchNorm1d(conv.out_channels), self.training, activation=self.activation[0])
             for conv in self.convs_bank], dim=-1)
-
         # Maxpooling:
         maxpool_output = self.max_pool(conv_outputs)
         # Two projection layers:
         proj1_output = Conv1d(maxpool_output, self.conv1, nn.BatchNorm1d(self.conv1.out_channels), self.training, activation=self.activation[0])
         proj2_output = Conv1d(proj1_output, self.conv2, nn.BatchNorm1d(self.conv2.out_channels), self.training)
-
         # Residual connection:
         highway_input = proj2_output + inputs
 
