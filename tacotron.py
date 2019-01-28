@@ -1,11 +1,14 @@
+import math
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils as utils
+
+from zoneout_rnn import ZoneoutRNN
 from hparams import hparams as hp
-import numpy as np
-from ZoneoutRNN import ZoneoutRNN
-import math
+
 
 class Tacotron(nn.Module):
     def __init__(self, encoder, decoder, postnet, PostCBHG=None, max_length=1000):
@@ -23,7 +26,7 @@ class Tacotron(nn.Module):
         :param mel_group: (mel_target, max_target_len) mel_target: [batch_size,  max_target_len, num_mels*hp.outputs_per_step]
         :param linear_target: [batch_size, max_target_len, num_freq*hp.outputs_per_step]
         :param stop_token_target: [batch_size, max_target_len] Value is zero indicating that this time step is not the end.
-        :return:
+        :return: loss or mel_outputs
         '''
 
         input_seqs, max_input_len = input_group
