@@ -5,6 +5,10 @@ from hparams import hparams as hp
 def get_vocab_size():
     return 100
 
+def make_divisible(dividend, divisor):
+    return dividend if dividend % divisor == 0 \
+            else (dividend + divisor - dividend % divisor)
+
 def compute_same_padding(kernel_size, input_length, dilation=2):
     #when stride == 1, dilation == 2, groups == 1
     #Lout = [(Lin + 2 * padding - dilation * (kernel_size - 1) - 1) + 1]

@@ -19,7 +19,7 @@ class Tacotron(nn.Module):
         self.post_cbhg = PostCBHG
         self.max_length = max_length
 
-    def forward(self, input_group, mel_group = None, linear_target=None, stop_token_target=None):
+    def forward(self, input_seqs, mel_target = None, linear_target=None, stop_token_target=None):
         '''
 
         :param input_group: (input_seqs, max_input_len) input_seqs: [batch_size, max_input_len]
@@ -29,11 +29,11 @@ class Tacotron(nn.Module):
         :return: loss or mel_outputs
         '''
 
-        input_seqs, max_input_len = input_group
         batch_size = input_seqs.size(0)
-        if mel_group is not None:
-            mel_target, max_target_len = mel_group
-            max_target_len = max_target_len
+        max_input_len = input_seqs.size(1)
+
+        if mel_target is not None:
+            max_target_len = mel_target.size(1)
         else:
             assert hp.use_gta_mode == False, 'if use_gta_mode == True, please provide with target'
             max_target_len = self.max_length
