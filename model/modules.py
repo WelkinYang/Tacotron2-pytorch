@@ -1,5 +1,3 @@
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,7 +5,7 @@ import torch.nn.functional as F
 from utils import get_vocab_size
 from hparams import hparams as hp
 from zoneout_rnn import ZoneoutRNN
-from attention import LocationSensitiveSoftAttention
+from model.attention import LocationSensitiveSoftAttention
 from utils import Conv1d, highwaynet, compute_same_padding
 
 class EncoderConvlutions(nn.Module):
