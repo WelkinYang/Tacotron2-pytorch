@@ -1,9 +1,7 @@
 import torch
+import torch.nn as nn
 import torch.functional as F
 from hparams import hparams as hp
-
-def get_vocab_size():
-    return 100
 
 def make_divisible(dividend, divisor):
     return dividend if dividend % divisor == 0 \

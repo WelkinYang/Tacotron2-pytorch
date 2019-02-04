@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from hparams import hparams as hp
 from utils import make_divisible
+from text.text import text_to_sequence
 from torch.utils.data import Dataset
 
 
@@ -21,9 +22,10 @@ class SpeechDataset(Dataset):
     def __getitem__(self, index):
         id = self.meta_data.iloc[index]['id']
         text = self.meta_data.iloc[index]['text']
+        input_seq = text_to_sequence(text)
         mels = np.load(f'{self.path}/mels/{id}')
         linears = np.load(f'{self.path}/linears/{id}')
-        return text, (mels, linears)
+        return input_seq, (mels, linears)
 
     def __len__(self):
         return len(self.meta_data)

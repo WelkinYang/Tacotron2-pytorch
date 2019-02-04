@@ -11,22 +11,22 @@ from hparams import hparams as hp
 
 
 class Tacotron(nn.Module):
-    def __init__(self, encoder, decoder, postnet, PostCBHG=None, max_length=1000):
+    def __init__(self, encoder, decoder, postnet, post_cbhg=None, max_length=1000):
         super(Tacotron, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.postnet = postnet
-        self.post_cbhg = PostCBHG
+        self.post_cbhg = post_cbhg
         self.max_length = max_length
 
     def forward(self, input_seqs, mel_target = None, linear_target=None, stop_token_target=None):
         '''
 
-        :param input_group: (input_seqs, max_input_len) input_seqs: [batch_size, max_input_len]
-        :param mel_group: (mel_target, max_target_len) mel_target: [batch_size,  max_target_len, num_mels*hp.outputs_per_step]
+        :param input_seqs: [batch_size, max_input_len]
+        :param mel_target: [batch_size,  max_target_len, num_mels*hp.outputs_per_step]
         :param linear_target: [batch_size, max_target_len, num_freq*hp.outputs_per_step]
         :param stop_token_target: [batch_size, max_target_len] Value is zero indicating that this time step is not the end.
-        :return: loss or mel_outputs
+        :return: loss or mel_outputs, depend on training or evaluating
         '''
 
         batch_size = input_seqs.size(0)

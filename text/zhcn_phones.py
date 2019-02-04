@@ -1,4 +1,4 @@
-phone_to_id = {
+char_to_id = {
 "sil": 0,
 "p": 1,
 "eng2": 2,

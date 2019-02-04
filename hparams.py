@@ -22,7 +22,8 @@ hparams = HParams(
     # text, you may want to use "basic_cleaners" or "transliteration_cleaners" See TRAINING_DATA.md.
     cleaners='english_cleaners',
 
-    lang="enus",
+    char_list='zhcn_phones', #all of the characters in the text you use
+
 
     # Audio:
     num_mels=80,

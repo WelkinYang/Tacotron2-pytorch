@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils import get_vocab_size
+from text.text import get_vocab_size
 from hparams import hparams as hp
 from zoneout_rnn import ZoneoutRNN
 from model.attention import LocationSensitiveSoftAttention

@@ -1,5 +1,6 @@
+import os
 from hparams import hparams as hp
-char_list = __import__(hp.char_list)
+char_list = __import__("text." +  hp.char_list)
 
 def get_vocab_size():
     return len(char_list.char_to_id)
