@@ -1,15 +1,47 @@
 import os
 import sys
+import tqdm
 import logging
 import argparse
-from model.model_utils import create_model
+
 from hparams import hparams as hp
+from model.model_utils import create_model
+from datasets import SpeechDataset, collate_fn
+
 
 import torch
 import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, RandomSampler
 
-def train(args, exp_name, step):
-    pass
+def train(args, model, exp_name, step, device):
+    data_path = os.path.join(args.base_dir, args.data)
+    dataset = SpeechDataset(data_path)
+
+    optimizer = optim.Adam(model.parameters(), lr=hp.inital_learning_rate, weight_decay=hp.decay_rate)
+
+    sampler = RandomSampler(dataset)
+    loader = DataLoader(dataset, batch_size=hp.batch_size, sampler=sampler, num_workers=6, collate_fn=collate_fn, pin_memory=True)
+
+    while True:
+        pbar = tqdm(loader, total=len(loader), unit=' batches')
+        for b, (input_batch, mel_target_batch, linear_target_batch, stop_token_batch) in enumerate(pbar):
+
+            input = input_batch.to(device=device)
+            mel_target = mel_target_batch.to(device=device)
+            linear_target = linear_target_batch.to(device=device)
+            stop_token_target = stop_token_batch.to(device=device)
+
+            loss = model(input, mel_target, linear_target, stop_token_target)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            step = step + 1
+
+
+
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -25,8 +57,6 @@ def main():
                         help='Steps between writing checkpoints')
     parser.add_argument('--eval_interval', type=int, default=5000,
                         help='Steps between eval on test data')
-    parser.add_argument('--epochs', default=5000000, type=int,
-                        help='number of epochs to train a tacotron2')
     parser.add_argument('--name', default='tacotron2', type=str,
                         help='name of the experiment')
 
@@ -54,7 +84,7 @@ def main():
         model = nn.DataParallel(model)
     model.to(device)
 
-    train(args, model, exp_name, step)
+    train(args, model, exp_name, step, device)
 
 if __name__ == '__main__':
     main()
