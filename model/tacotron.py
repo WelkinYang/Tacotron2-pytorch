@@ -93,24 +93,13 @@ class Tacotron(nn.Module):
             self.post_cbhg.initialize(self.decoder.decoder_output_size, max_target_len)
             expand_outputs = self.post_cbhg(mel_outputs)
             linear_outputs = F.linear(expand_outputs, weight=torch.nn.init.normal_(torch.empty(hp.num_freq*hp.outputs_per_step, expand_outputs.shape[2])))
-
-        #calculate losses
-        if self.training:
-            decoder_loss = F.mse_loss(decoder_outputs, mel_target)
-            mel_loss = F.mse_loss(mel_outputs, mel_target)
-
-            loss = decoder_loss + mel_loss
-
-            if hp.use_linear_spec:
-                linear_loss = F.mse_loss(linear_outputs, linear_target)
-                loss += linear_loss
-
-            if hp.use_stop_token:
-                stop_token_loss = F.binary_cross_entropy(stop_token_prediction, stop_token_target, reduction='sum')
-                loss += stop_token_loss
-
-            return loss
         else:
-            #model is eval
-            return mel_outputs
+            linear_outputs = None
+
+        if hp.use_stop_token is not True:
+            stop_token_prediction = None
+
+        return decoder_outputs, mel_outputs, linear_outputs, stop_token_prediction
+
+
 

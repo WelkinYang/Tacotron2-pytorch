@@ -3,6 +3,7 @@ import sys
 import tqdm
 import logging
 import argparse
+from tensorboardX import SummaryWriter
 
 from hparams import hparams as hp
 from model.model_utils import create_model
@@ -12,7 +13,9 @@ from datasets import SpeechDataset, collate_fn
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, RandomSampler
+
 
 def train(args, model, exp_name, step, device):
     data_path = os.path.join(args.base_dir, args.data)
@@ -32,16 +35,28 @@ def train(args, model, exp_name, step, device):
             linear_target = linear_target_batch.to(device=device)
             stop_token_target = stop_token_batch.to(device=device)
 
-            loss = model(input, mel_target, linear_target, stop_token_target)
+            decoder_outputs, mel_outputs, linear_outputs, stop_token_prediction = \
+                model(input, mel_target, linear_target, stop_token_target)
+
+            decoder_loss = F.mse_loss(decoder_outputs, mel_target)
+            mel_loss = F.mse_loss(mel_outputs, mel_target)
+
+            loss = decoder_loss + mel_loss
+
+            if hp.use_linear_spec:
+                linear_loss = F.mse_loss(linear_outputs, linear_target)
+                loss += linear_loss
+
+            if hp.use_stop_token:
+                stop_token_loss = F.binary_cross_entropy(stop_token_prediction, stop_token_target, reduction='sum')
+                loss += stop_token_loss
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             step = step + 1
-
-
-
-
+            logging.info(f'loss: {loss.item():.4f} at step{step}')
 
 def main():
     parser = argparse.ArgumentParser()
