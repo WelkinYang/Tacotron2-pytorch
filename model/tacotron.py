@@ -57,12 +57,14 @@ class Tacotron(nn.Module):
         decoder_outputs = torch.zeros(batch_size, max_target_len, self.decoder.decoder_output_size)
         self.postnet.initialize(self.decoder.decoder_output_size, max_target_len)
         stop_token_prediction = torch.zeros(batch_size, max_target_len, hp.outputs_per_step)
+        alignments = torch.zeros(batch_size, max_target_len, max_input_len)
 
         for t in range(max_target_len):
-            decoder_output, stop_token_output, decoder_hidden, decoder_cell_state = \
+            decoder_output, stop_token_output, decoder_hidden, decoder_cell_state, alignment = \
                 self.decoder(decoder_inputs, decoder_hidden, decoder_cell_state)
             decoder_outputs[:, t, :] = torch.squeeze(decoder_output, 1)
             stop_token_prediction[:, t, :] = torch.squeeze(stop_token_output, 1)
+            alignments[:, t, :] = alignment
             if self.training:
                 if hp.teacher_forcing_schema == "full":
                     decoder_inputs = mel_target[:, t:t+1, :]
@@ -99,7 +101,7 @@ class Tacotron(nn.Module):
         if hp.use_stop_token is not True:
             stop_token_prediction = None
 
-        return decoder_outputs, mel_outputs, linear_outputs, stop_token_prediction
+        return decoder_outputs, mel_outputs, linear_outputs, stop_token_prediction, alignments
 
 
 

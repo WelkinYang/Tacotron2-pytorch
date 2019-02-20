@@ -147,7 +147,7 @@ class Decoder(nn.Module):
             decoder_output = self.linear_projection_activation(decoder_output)
         if self.stop_projection_activation is not None:
             stop_token_output = self.stop_projection_activation(stop_token_output)
-        return decoder_output, stop_token_output, hn, cn
+        return decoder_output, stop_token_output, hn, cn, self.attn.alignment
 
 class PostNet(nn.Module):
     def __init__(self):

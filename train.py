@@ -8,7 +8,7 @@ from tensorboardX import SummaryWriter
 from hparams import hparams as hp
 from model.model_utils import create_model
 from datasets import SpeechDataset, collate_fn
-
+from utils import show_alignment, show_spectrogram
 
 import torch
 import torch.nn as nn
@@ -17,9 +17,11 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, RandomSampler
 
 
-def train(args, model, exp_name, step, device):
+def train(args, model, exp_name, step, checkpoint_path, device):
     data_path = os.path.join(args.base_dir, args.data)
     dataset = SpeechDataset(data_path)
+
+    writer = SummaryWriter(f'runs/{exp_name}')
 
     optimizer = optim.Adam(model.parameters(), lr=hp.inital_learning_rate, weight_decay=hp.decay_rate)
 
@@ -35,7 +37,7 @@ def train(args, model, exp_name, step, device):
             linear_target = linear_target_batch.to(device=device)
             stop_token_target = stop_token_batch.to(device=device)
 
-            decoder_outputs, mel_outputs, linear_outputs, stop_token_prediction = \
+            decoder_outputs, mel_outputs, linear_outputs, stop_token_prediction, alignments = \
                 model(input, mel_target, linear_target, stop_token_target)
 
             decoder_loss = F.mse_loss(decoder_outputs, mel_target)
@@ -57,6 +59,23 @@ def train(args, model, exp_name, step, device):
 
             step = step + 1
             logging.info(f'loss: {loss.item():.4f} at step{step}')
+
+            if step % args.checkpoint_interval:
+                torch.save(model.state_dict(), f'{checkpoint_path}/{exp_name}_{str(step)}.pt')
+
+            if step % args.summary_interval:
+                writer.add_scalar('loss', loss.item(), step)
+                alignment_plot = show_alignment(alignments[0], return_array=True)
+                output_plot = show_spectrogram(mel_outputs.item()[0],
+                                               input.item()[0], return_array=True)
+                target_plot = show_spectrogram(mel_target.item()[0],
+                                               input.item()[0], return_array=True)
+
+                writer.add_image('alignment', alignment_plot, step)
+                writer.add_image('output', output_plot, step)
+                writer.add_image('target', target_plot, step)
+                for name, param in model.named_parameters():
+                    writer.add_histogram(name, param.clone().cpu().data.numpy(), step, bins='doane')
 
 def main():
     parser = argparse.ArgumentParser()
@@ -99,7 +118,7 @@ def main():
         model = nn.DataParallel(model)
     model.to(device)
 
-    train(args, model, exp_name, step, device)
+    train(args, model, exp_name, step, checkpoint_path, device)
 
 if __name__ == '__main__':
     main()
